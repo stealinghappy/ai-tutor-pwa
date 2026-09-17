@@ -84,17 +84,27 @@
     return data.result;
   }
 
-  // 長輪詢等待「屬於這個 session 的」answer 訊號
-  async function waitForAnswer() {
-    let offset = 0;
+  // 在送出 offer「之前」先取得 getUpdates 的起始 offset。
+  // 這個順序很重要：如果在送出 offer 之後才取 offset 基準，家裡主機端常常
+  // 不到一秒就把 answer 回傳回來，用來取基準的那次查詢反而會把這則 answer
+  // 當成「舊訊息」一併標記已讀，導致後面真正的長輪詢永遠等不到它
+  // （症狀：網頁卡在「等待主機回應中」一直跑輪數，但主機端 log 其實
+  // 已經正常處理、送出 answer 了）。所以一定要在送 offer 前就先卡好起點。
+  async function getPollBaselineOffset() {
     try {
       const initial = await tgGetUpdates(-1); // -1 只拿最新一筆，用來取得 offset 起點
       if (initial.length > 0) {
-        offset = initial[initial.length - 1].update_id + 1;
+        return initial[initial.length - 1].update_id + 1;
       }
     } catch (e) {
       // 初始化 offset 失敗可忽略，退回從 0 開始（可能會多處理幾則舊訊息，無害）
     }
+    return 0;
+  }
+
+  // 長輪詢等待「屬於這個 session 的」answer 訊號
+  async function waitForAnswer(startOffset) {
+    let offset = startOffset || 0;
 
     for (let round = 0; round < ANSWER_WAIT_MAX_ROUNDS; round++) {
       emit("status", "等待主機回應中…（第 " + (round + 1) + " 輪）");
@@ -179,11 +189,14 @@
       emit("status", "等待 ICE gathering 完成…");
       await waitIceGatheringComplete(pc);
 
+      // 一定要在送出 offer 之前先卡好長輪詢起點，見 getPollBaselineOffset 註解。
+      const baselineOffset = await getPollBaselineOffset();
+
       emit("status", "送出連線訊號…");
       await tgSendMessage(JSON.stringify({ type: "offer", sdp: pc.localDescription.sdp, session_id: sessionId }));
 
       emit("status", "等待家裡主機回應…");
-      const answerSdp = await waitForAnswer();
+      const answerSdp = await waitForAnswer(baselineOffset);
 
       emit("status", "設定連線，等待打通…");
       await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });

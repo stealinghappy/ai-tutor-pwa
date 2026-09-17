@@ -105,18 +105,26 @@ async function tgGetUpdates(offset) {
   return data.result;
 }
 
-// 長輪詢等待一則 {"type":"answer",...} 的訊息（來自家裡主機端的 Telethon 真人帳號）
-async function waitForAnswer(mySessionId) {
-  // 先抓一次目前最新的 update_id，避免處理到很久以前的舊訊息
-  let offset = 0;
+// 一定要在送出 offer「之前」呼叫，取得長輪詢起點。如果在送出 offer 之後才
+// 取 offset 基準，家裡主機端常常不到一秒就把 answer 回傳回來，用來取基準
+// 的那次查詢反而會把這則 answer 當成「舊訊息」一併標記已讀，導致後面真正
+// 的長輪詢永遠等不到它（症狀：網頁卡在「等待 answer 訊號中」一直跑輪數，
+// 但主機端 log 其實已經正常處理、送出 answer 了）。
+async function getPollBaselineOffset() {
   try {
     const initial = await tgGetUpdates(-1); // -1 只拿最新一筆，用來取得 offset 起點
     if (initial.length > 0) {
-      offset = initial[initial.length - 1].update_id + 1;
+      return initial[initial.length - 1].update_id + 1;
     }
   } catch (e) {
     log("初始化 offset 失敗（可忽略，從 0 開始）：" + e.message);
   }
+  return 0;
+}
+
+// 長輪詢等待一則 {"type":"answer",...} 的訊息（來自家裡主機端的 Telethon 真人帳號）
+async function waitForAnswer(mySessionId, startOffset) {
+  let offset = startOffset || 0;
 
   for (let round = 0; round < ANSWER_WAIT_MAX_ROUNDS; round++) {
     log(`等待 answer 訊號中…（第 ${round + 1} 輪長輪詢）`);
@@ -206,13 +214,16 @@ async function runTest() {
     await waitIceGatheringComplete(pc);
     log("ICE gathering 完成，candidate 數量已包含在 SDP 裡");
 
+    // 一定要在送出 offer 之前先卡好長輪詢起點，見 getPollBaselineOffset 註解。
+    const baselineOffset = await getPollBaselineOffset();
+
     setStatus("送出 offer 訊號…", "pending");
     const offerPayload = JSON.stringify({ type: "offer", sdp: pc.localDescription.sdp, session_id: sessionId });
     await tgSendMessage(offerPayload);
     log("offer 已送出（SDP 長度 " + pc.localDescription.sdp.length + "）");
 
     setStatus("等待家裡主機端回應（answer）…", "pending");
-    const answerSdp = await waitForAnswer(sessionId);
+    const answerSdp = await waitForAnswer(sessionId, baselineOffset);
 
     setStatus("設定 answer，等待 P2P 連線打通…", "pending");
     await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
