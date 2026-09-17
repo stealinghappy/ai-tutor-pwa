@@ -1,215 +1,232 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=1024, initial-scale=1.0, user-scalable=no" />
-<title>AI 家教遊戲系統</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 家教 — WebRTC 連通測試</title>
 <style>
-  :root {
-    --bg: #14121a;
-    --panel: #201c29;
-    --accent: #b23a48;
-    --accent2: #4a7c59;
-    --text: #eee6e6;
-    --muted: #9a8fae;
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    background: #16121f;
+    color: #e8e0f0;
+    padding: 20px;
+    max-width: 640px;
+    margin: 0 auto;
   }
-  * { box-sizing: border-box; }
-  html, body {
-    margin: 0; padding: 0; width: 100%; height: 100%;
-    background: var(--bg); color: var(--text);
-    font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
-    overflow: hidden;
+  h1 { font-size: 1.3rem; color: #c9a6ff; }
+  .status {
+    padding: 14px;
+    border-radius: 8px;
+    margin: 12px 0;
+    font-weight: bold;
   }
-  #app { width: 100%; height: 100%; display: flex; flex-direction: column; }
-
-  #select-screen {
-    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px;
+  .status.pending { background: #2a2340; color: #d8c8ff; }
+  .status.ok { background: #1f3a2a; color: #8fe8b0; }
+  .status.fail { background: #3a1f24; color: #ff9aa0; }
+  #log {
+    background: #0d0a14;
+    border: 1px solid #3a2e55;
+    border-radius: 8px;
+    padding: 12px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.82rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 50vh;
+    overflow-y: auto;
   }
-  #select-screen h1 { font-size: 28px; letter-spacing: 2px; }
-  .select-group { display: flex; gap: 16px; }
-  .select-btn {
-    padding: 14px 28px; font-size: 18px; border-radius: 10px; border: 2px solid var(--accent);
-    background: var(--panel); color: var(--text); cursor: pointer;
+  button {
+    background: #6b3fd6;
+    color: white;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 6px;
+    font-size: 1rem;
+    cursor: pointer;
+    margin-top: 10px;
   }
-  .select-btn.active, .select-btn:hover { background: var(--accent); }
-  #start-btn {
-    margin-top: 12px; padding: 16px 48px; font-size: 20px; border-radius: 12px; border: none;
-    background: var(--accent2); color: #fff; cursor: pointer;
-  }
-  #start-btn:disabled { opacity: .4; cursor: not-allowed; }
-
-  #battle-screen { flex: 1; display: none; }
-  #battle-screen.active { display: flex; }
-  #top-bar {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid #3a3446;
-  }
-  #battle-body { flex: 1; display: flex; }
-  #battlefield {
-    flex: 1.1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-    background: radial-gradient(ellipse at center, #2a2333 0%, #14121a 80%);
-    position: relative;
-  }
-  #monster-name { font-size: 20px; margin-bottom: 8px; color: var(--muted); }
-  .sprite-player { width: 320px; height: 320px; display: flex; align-items: center; justify-content: center; position: relative; }
-  .sprite-frame-img { max-width: 100%; max-height: 100%; image-rendering: pixelated; }
-  .sprite-placeholder-label {
-    display: none; align-items: center; justify-content: center;
-    width: 220px; height: 220px; border-radius: 16px; border: 3px dashed var(--accent);
-    color: var(--accent); font-size: 22px; letter-spacing: 4px; text-align: center;
-  }
-  #monster-hp { width: 260px; margin-top: 12px; }
-  .hp-bar-outer { width: 100%; height: 14px; background: #3a3446; border-radius: 7px; overflow: hidden; }
-  .hp-bar-inner { height: 100%; background: var(--accent); transition: width .3s; }
-  .hp-bar-text { text-align: center; font-size: 12px; color: var(--muted); margin-top: 2px; }
-
-  #question-panel {
-    flex: 1; padding: 24px; display: flex; flex-direction: column; gap: 16px;
-    background: var(--panel); border-left: 1px solid #3a3446; position: relative;
-  }
-  .question-text { font-size: 20px; line-height: 1.6; min-height: 3em; }
-  .choices { display: flex; flex-direction: column; gap: 10px; }
-  .choice-btn {
-    text-align: left; padding: 12px 16px; border-radius: 8px; border: 1px solid #4a4358;
-    background: #2a2536; color: var(--text); font-size: 16px; cursor: pointer;
-  }
-  .choice-btn:hover { border-color: var(--accent); background: #352830; }
-  .hint-btn { align-self: flex-start; background: none; border: none; color: var(--muted); cursor: pointer; margin-right: 8px; }
-  .diagram-note { font-size: 13px; color: var(--muted); }
-
-  #player-hp .hp-heart { font-size: 18px; margin-right: 2px; }
-  #coins, #heal-items { font-size: 16px; }
-  .heal-use-btn { margin-left: 8px; padding: 4px 10px; border-radius: 6px; border: none; background: var(--accent2); color: #fff; cursor: pointer; }
-  .heal-use-btn:disabled { opacity: .3; cursor: not-allowed; }
-
-  .feedback {
-    position: absolute; top: 12px; right: 24px; font-size: 18px; font-weight: bold;
-    opacity: 0; transition: opacity .3s;
-  }
-  .feedback.correct { color: #6fd08c; }
-  .feedback.wrong { color: #e08585; }
-
-  .empty-state { color: var(--muted); text-align: center; padding: 40px; }
+  button:disabled { opacity: 0.5; cursor: default; }
 </style>
 </head>
 <body>
-<div id="app">
+  <h1>AI 家教遊戲系統 — WebRTC 最小連通測試</h1>
+  <div id="status" class="status pending">尚未開始</div>
+  <button id="startBtn">開始測試</button>
+  <div id="log"></div>
 
-  <div id="select-screen">
-    <h1>🎮 AI 家教遊戲系統</h1>
-    <div>
-      <div style="margin-bottom:6px; color: var(--muted);">選擇玩家</div>
-      <div class="select-group" id="player-select">
-        <button class="select-btn" data-player="junior" data-grade="junior">國一</button>
-        <button class="select-btn" data-player="senior" data-grade="senior">高三</button>
-      </div>
-    </div>
-    <div>
-      <div style="margin-bottom:6px; color: var(--muted);">選擇科目</div>
-      <div class="select-group" id="subject-select">
-        <button class="select-btn" data-subject="english">英文</button>
-        <button class="select-btn" data-subject="math">數學</button>
-        <button class="select-btn" data-subject="chinese">國文</button>
-      </div>
-    </div>
-    <button id="start-btn" disabled>開始打怪</button>
-  </div>
-
-  <div id="battle-screen">
-    <div style="width:100%; display:flex; flex-direction:column;">
-      <div id="top-bar">
-        <div id="player-hp"></div>
-        <div style="display:flex; gap:16px; align-items:center;">
-          <div id="coins"></div>
-          <div id="heal-items"></div>
-        </div>
-        <button id="back-btn" class="select-btn" style="padding:6px 14px; font-size:14px;">返回選單</button>
-      </div>
-      <div id="battle-body">
-        <div id="battlefield">
-          <div id="monster-name"></div>
-          <div id="monster-stage" class="sprite-player"></div>
-          <div id="monster-hp"></div>
-        </div>
-        <div id="question-panel">
-          <div class="feedback" id="feedback"></div>
-          <div id="question-area"></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-</div>
-
-<script>window.AITUTOR_ASSET_BASE = "/";</script>
-<script src="shared/wallet.js"></script>
-<script src="shared/audio.js"></script>
-<script src="shared/achievement.js"></script>
-<script src="rpg/animation.js"></script>
-<script src="rpg/ui.js"></script>
-<script src="rpg/battle.js"></script>
 <script>
-(function () {
-  let selectedPlayer = null;
-  let selectedGrade = null;
-  let selectedSubject = null;
+// ── 設定 ────────────────────────────────────────────────────────────
+// 這是 AI 家教專用的 bot token，僅用於此專案的 WebRTC 訊號轉發，
+// 外洩風險已由專案所有者確認可接受（見專案記錄）。
+const BOT_TOKEN = "8726131538:AAEZq0hSSBxmfF9bBUuFzF-lA36NL2vsf6A";
+const CHAT_ID = 8348964950;
+const TG_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
+const ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+];
+const GETUPDATES_TIMEOUT_SEC = 20; // Telegram 長輪詢逾時秒數
+const ANSWER_WAIT_MAX_ROUNDS = 15; // 最多輪詢幾次還沒收到 answer 就算失敗
 
-  const playerBtns = document.querySelectorAll("#player-select .select-btn");
-  const subjectBtns = document.querySelectorAll("#subject-select .select-btn");
-  const startBtn = document.getElementById("start-btn");
+// ── UI 工具 ─────────────────────────────────────────────────────────
+const statusEl = document.getElementById("status");
+const logEl = document.getElementById("log");
+const startBtn = document.getElementById("startBtn");
 
-  playerBtns.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      playerBtns.forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      selectedPlayer = btn.dataset.player;
-      selectedGrade = btn.dataset.grade;
-      updateStartBtn();
-    });
+function setStatus(text, kind) {
+  statusEl.textContent = text;
+  statusEl.className = "status " + kind;
+}
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  logEl.textContent += `[${t}] ${msg}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+  console.log(msg);
+}
+
+// ── Telegram Bot API 工具 ──────────────────────────────────────────
+async function tgSendMessage(text) {
+  const resp = await fetch(`${TG_API}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: CHAT_ID, text }),
   });
+  const data = await resp.json();
+  if (!data.ok) throw new Error("sendMessage 失敗: " + JSON.stringify(data));
+  return data.result;
+}
 
-  subjectBtns.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      subjectBtns.forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      selectedSubject = btn.dataset.subject;
-      updateStartBtn();
-    });
-  });
+async function tgGetUpdates(offset) {
+  const url = `${TG_API}/getUpdates?timeout=${GETUPDATES_TIMEOUT_SEC}&offset=${offset}`;
+  const resp = await fetch(url);
+  const data = await resp.json();
+  if (!data.ok) throw new Error("getUpdates 失敗: " + JSON.stringify(data));
+  return data.result;
+}
 
-  function updateStartBtn() {
-    startBtn.disabled = !(selectedPlayer && selectedSubject);
+// 長輪詢等待一則 {"type":"answer",...} 的訊息（來自家裡主機端的 Telethon 真人帳號）
+async function waitForAnswer() {
+  // 先抓一次目前最新的 update_id，避免處理到很久以前的舊訊息
+  let offset = 0;
+  try {
+    const initial = await tgGetUpdates(-1); // -1 只拿最新一筆，用來取得 offset 起點
+    if (initial.length > 0) {
+      offset = initial[initial.length - 1].update_id + 1;
+    }
+  } catch (e) {
+    log("初始化 offset 失敗（可忽略，從 0 開始）：" + e.message);
   }
 
-  startBtn.addEventListener("click", () => {
-    document.getElementById("select-screen").style.display = "none";
-    const battleScreen = document.getElementById("battle-screen");
-    battleScreen.classList.add("active");
+  for (let round = 0; round < ANSWER_WAIT_MAX_ROUNDS; round++) {
+    log(`等待 answer 訊號中…（第 ${round + 1} 輪長輪詢）`);
+    let updates;
+    try {
+      updates = await tgGetUpdates(offset);
+    } catch (e) {
+      log("getUpdates 發生錯誤：" + e.message);
+      continue;
+    }
 
-    const els = {
-      playerHpEl: document.getElementById("player-hp"),
-      monsterHpEl: document.getElementById("monster-hp"),
-      coinsEl: document.getElementById("coins"),
-      healEl: document.getElementById("heal-items"),
-      monsterNameEl: document.getElementById("monster-name"),
-      monsterStage: document.getElementById("monster-stage"),
-      questionArea: document.getElementById("question-area"),
-      feedbackEl: document.getElementById("feedback"),
+    for (const upd of updates) {
+      offset = upd.update_id + 1;
+      const msg = upd.message;
+      if (!msg || !msg.text) continue;
+      const text = msg.text.trim();
+      if (!text.startsWith("{")) continue;
+      let payload;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        continue;
+      }
+      if (payload.type === "answer" && payload.sdp) {
+        log("收到 answer 訊號（SDP 長度 " + payload.sdp.length + "）");
+        return payload.sdp;
+      }
+    }
+  }
+  throw new Error("等太久沒收到 answer，家裡主機端可能沒開 telethon_listener.py，或訊號沒送到");
+}
+
+// 等 ICE gathering 完成（non-trickle：確保 offer SDP 裡已經包含完整 candidate）
+function waitIceGatheringComplete(pc) {
+  if (pc.iceGatheringState === "complete") return Promise.resolve();
+  return new Promise((resolve) => {
+    function check() {
+      if (pc.iceGatheringState === "complete") {
+        pc.removeEventListener("icegatheringstatechange", check);
+        resolve();
+      }
+    }
+    pc.addEventListener("icegatheringstatechange", check);
+    // 保險逾時，避免某些網路環境永遠不會標記 complete
+    setTimeout(resolve, 8000);
+  });
+}
+
+// ── 主流程 ──────────────────────────────────────────────────────────
+async function runTest() {
+  startBtn.disabled = true;
+  logEl.textContent = "";
+  setStatus("建立 RTCPeerConnection…", "pending");
+
+  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  const channel = pc.createDataChannel("test");
+
+  pc.oniceconnectionstatechange = () => {
+    log("iceConnectionState = " + pc.iceConnectionState);
+  };
+  pc.onconnectionstatechange = () => {
+    log("connectionState = " + pc.connectionState);
+  };
+
+  const pongReceived = new Promise((resolve, reject) => {
+    channel.onopen = () => {
+      log("DataChannel 已開啟，送出 ping…");
+      channel.send("ping");
     };
-
-    const session = new AITutor.Battle.BattleSession({
-      playerId: selectedPlayer,
-      grade: selectedGrade,
-      subject: selectedSubject,
-      els,
-    });
-    session.start();
+    channel.onmessage = (event) => {
+      log("收到回覆：" + event.data);
+      if (String(event.data).startsWith("pong")) {
+        resolve(event.data);
+      }
+    };
+    channel.onerror = (e) => reject(new Error("DataChannel 錯誤：" + e));
+    setTimeout(() => reject(new Error("DataChannel 打通後 15 秒內沒收到 pong")), 15000);
   });
 
-  document.getElementById("back-btn").addEventListener("click", () => {
-    location.reload();
-  });
-})();
+  try {
+    setStatus("建立 offer…", "pending");
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    setStatus("等待 ICE gathering 完成…", "pending");
+    await waitIceGatheringComplete(pc);
+    log("ICE gathering 完成，candidate 數量已包含在 SDP 裡");
+
+    setStatus("送出 offer 訊號…", "pending");
+    const offerPayload = JSON.stringify({ type: "offer", sdp: pc.localDescription.sdp });
+    await tgSendMessage(offerPayload);
+    log("offer 已送出（SDP 長度 " + pc.localDescription.sdp.length + "）");
+
+    setStatus("等待家裡主機端回應（answer）…", "pending");
+    const answerSdp = await waitForAnswer();
+
+    setStatus("設定 answer，等待 P2P 連線打通…", "pending");
+    await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+
+    const result = await pongReceived;
+    setStatus("✅ WebRTC 連線成功！收到：" + result, "ok");
+  } catch (err) {
+    log("測試失敗：" + err.message);
+    setStatus("❌ 測試失敗：" + err.message, "fail");
+  } finally {
+    startBtn.disabled = false;
+  }
+}
+
+startBtn.addEventListener("click", runTest);
 </script>
 </body>
 </html>
