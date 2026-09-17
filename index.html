@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 家教 — WebRTC 連通測試</title>
+<style>
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    background: #16121f;
+    color: #e8e0f0;
+    padding: 20px;
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.3rem; color: #c9a6ff; }
+  .status {
+    padding: 14px;
+    border-radius: 8px;
+    margin: 12px 0;
+    font-weight: bold;
+  }
+  .status.pending { background: #2a2340; color: #d8c8ff; }
+  .status.ok { background: #1f3a2a; color: #8fe8b0; }
+  .status.fail { background: #3a1f24; color: #ff9aa0; }
+  #log {
+    background: #0d0a14;
+    border: 1px solid #3a2e55;
+    border-radius: 8px;
+    padding: 12px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.82rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 50vh;
+    overflow-y: auto;
+  }
+  button {
+    background: #6b3fd6;
+    color: white;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 6px;
+    font-size: 1rem;
+    cursor: pointer;
+    margin-top: 10px;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+</style>
+</head>
+<body>
+  <h1>AI 家教遊戲系統 — WebRTC 最小連通測試</h1>
+  <div id="status" class="status pending">尚未開始</div>
+  <button id="startBtn">開始測試</button>
+  <div id="log"></div>
+
+<script>
+// ── 設定 ────────────────────────────────────────────────────────────
+// 這是 AI 家教專用的 bot token，僅用於此專案的 WebRTC 訊號轉發，
+// 外洩風險已由專案所有者確認可接受（見專案記錄）。
+const BOT_TOKEN = "8726131538:AAEZq0hSSBxmfF9bBUuFzF-lA36NL2vsf6A";
+const CHAT_ID = 8348964950;
+const TG_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
+const ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+];
+const GETUPDATES_TIMEOUT_SEC = 20; // Telegram 長輪詢逾時秒數
+const ANSWER_WAIT_MAX_ROUNDS = 15; // 最多輪詢幾次還沒收到 answer 就算失敗
+
+// ── UI 工具 ─────────────────────────────────────────────────────────
+const statusEl = document.getElementById("status");
+const logEl = document.getElementById("log");
+const startBtn = document.getElementById("startBtn");
+
+function setStatus(text, kind) {
+  statusEl.textContent = text;
+  statusEl.className = "status " + kind;
+}
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  logEl.textContent += `[${t}] ${msg}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+  console.log(msg);
+}
+
+// ── Telegram Bot API 工具 ──────────────────────────────────────────
+async function tgSendMessage(text) {
+  const resp = await fetch(`${TG_API}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: CHAT_ID, text }),
+  });
+  const data = await resp.json();
+  if (!data.ok) throw new Error("sendMessage 失敗: " + JSON.stringify(data));
+  return data.result;
+}
+
+async function tgGetUpdates(offset) {
+  const url = `${TG_API}/getUpdates?timeout=${GETUPDATES_TIMEOUT_SEC}&offset=${offset}`;
+  const resp = await fetch(url);
+  const data = await resp.json();
+  if (!data.ok) throw new Error("getUpdates 失敗: " + JSON.stringify(data));
+  return data.result;
+}
+
+// 長輪詢等待一則 {"type":"answer",...} 的訊息（來自家裡主機端的 Telethon 真人帳號）
+async function waitForAnswer() {
+  // 先抓一次目前最新的 update_id，避免處理到很久以前的舊訊息
+  let offset = 0;
+  try {
+    const initial = await tgGetUpdates(-1); // -1 只拿最新一筆，用來取得 offset 起點
+    if (initial.length > 0) {
+      offset = initial[initial.length - 1].update_id + 1;
+    }
+  } catch (e) {
+    log("初始化 offset 失敗（可忽略，從 0 開始）：" + e.message);
+  }
+
+  for (let round = 0; round < ANSWER_WAIT_MAX_ROUNDS; round++) {
+    log(`等待 answer 訊號中…（第 ${round + 1} 輪長輪詢）`);
+    let updates;
+    try {
+      updates = await tgGetUpdates(offset);
+    } catch (e) {
+      log("getUpdates 發生錯誤：" + e.message);
+      continue;
+    }
+
+    for (const upd of updates) {
+      offset = upd.update_id + 1;
+      const msg = upd.message;
+      if (!msg || !msg.text) continue;
+      const text = msg.text.trim();
+      if (!text.startsWith("{")) continue;
+      let payload;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        continue;
+      }
+      if (payload.type === "answer" && payload.sdp) {
+        log("收到 answer 訊號（SDP 長度 " + payload.sdp.length + "）");
+        return payload.sdp;
+      }
+    }
+  }
+  throw new Error("等太久沒收到 answer，家裡主機端可能沒開 telethon_listener.py，或訊號沒送到");
+}
+
+// 等 ICE gathering 完成（non-trickle：確保 offer SDP 裡已經包含完整 candidate）
+function waitIceGatheringComplete(pc) {
+  if (pc.iceGatheringState === "complete") return Promise.resolve();
+  return new Promise((resolve) => {
+    function check() {
+      if (pc.iceGatheringState === "complete") {
+        pc.removeEventListener("icegatheringstatechange", check);
+        resolve();
+      }
+    }
+    pc.addEventListener("icegatheringstatechange", check);
+    // 保險逾時，避免某些網路環境永遠不會標記 complete
+    setTimeout(resolve, 8000);
+  });
+}
+
+// ── 主流程 ──────────────────────────────────────────────────────────
+async function runTest() {
+  startBtn.disabled = true;
+  logEl.textContent = "";
+  setStatus("建立 RTCPeerConnection…", "pending");
+
+  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+  const channel = pc.createDataChannel("test");
+
+  pc.oniceconnectionstatechange = () => {
+    log("iceConnectionState = " + pc.iceConnectionState);
+  };
+  pc.onconnectionstatechange = () => {
+    log("connectionState = " + pc.connectionState);
+  };
+
+  const pongReceived = new Promise((resolve, reject) => {
+    channel.onopen = () => {
+      log("DataChannel 已開啟，送出 ping…");
+      channel.send("ping");
+    };
+    channel.onmessage = (event) => {
+      log("收到回覆：" + event.data);
+      if (String(event.data).startsWith("pong")) {
+        resolve(event.data);
+      }
+    };
+    channel.onerror = (e) => reject(new Error("DataChannel 錯誤：" + e));
+    setTimeout(() => reject(new Error("DataChannel 打通後 15 秒內沒收到 pong")), 15000);
+  });
+
+  try {
+    setStatus("建立 offer…", "pending");
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    setStatus("等待 ICE gathering 完成…", "pending");
+    await waitIceGatheringComplete(pc);
+    log("ICE gathering 完成，candidate 數量已包含在 SDP 裡");
+
+    setStatus("送出 offer 訊號…", "pending");
+    const offerPayload = JSON.stringify({ type: "offer", sdp: pc.localDescription.sdp });
+    await tgSendMessage(offerPayload);
+    log("offer 已送出（SDP 長度 " + pc.localDescription.sdp.length + "）");
+
+    setStatus("等待家裡主機端回應（answer）…", "pending");
+    const answerSdp = await waitForAnswer();
+
+    setStatus("設定 answer，等待 P2P 連線打通…", "pending");
+    await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+
+    const result = await pongReceived;
+    setStatus("✅ WebRTC 連線成功！收到：" + result, "ok");
+  } catch (err) {
+    log("測試失敗：" + err.message);
+    setStatus("❌ 測試失敗：" + err.message, "fail");
+  } finally {
+    startBtn.disabled = false;
+  }
+}
+
+startBtn.addEventListener("click", runTest);
+</script>
+</body>
+</html>
